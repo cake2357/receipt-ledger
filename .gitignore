@@ -10,3 +10,4 @@ __pycache__/
 .pytest_cache/
 artifacts/
 .DS_Store
+.mypy_cache/
