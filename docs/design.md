@@ -13,13 +13,23 @@
 - `static/`: 日本語画面、DOMノード生成、外部CDNなし
 
 ## データモデル
-`categories(id,name UNIQUE,description)`：分類の説明をAI入力に含める。
+`categories(id,name UNIQUE,description)`：分類名と説明を保存・画面表示する。PaddleOCRには渡さず、OCR後の分類は商品名の完全一致ルールを使用する。
 `receipts(id,status,body,image,hash UNIQUE,raw,warnings)`：bodyはPydanticで検証した下書きJSON。円はfloatでなくStrictInt。NULL/空文字で不明を表現。imageはアプリ生成SHA256名のみ。
 `entries(receipt_id,line,category_id,amount INTEGER CHECK(typeof(amount)='integer'))`：確定時に原子的に作られる整数円台帳。再編集では原子的に削除。
 `rules(name PRIMARY KEY,category_id)`：確定時に学習する完全一致ルール。最後に確定した分類を採用。
 `drive_files(file_id PRIMARY KEY,receipt_id)`：同一内容の複数Drive IDも一つのレシートに対応する。
-`settings(key,value)`：同意フラグとフォルダIDのみ。APIキーは保存しない。
-`ocr_runs(id,receipt_id,created_at,raw)`：成功/不完全/拒否応答を全て監査保存。HTTP通信自体が失敗した場合は応答JSONを取得できないため記録不可。
+`settings(key,value)`：現在の設定はDriveフォルダID。旧OCR同意フラグは読込時に無視し、次回設定保存時には書き出さない。APIキーは保存しない。
+`ocr_runs(id,receipt_id,created_at,raw)`：認識結果を取得・検証できた場合に原文、座標、信頼指標を履歴保存する。下書き解析に失敗しても原文は残る。画像なし・確定済みの拒否、認識失敗、タイムアウトでは新しい履歴を作らない。旧OCRの履歴は保持する。
+
+## PaddleOCRの処理
+
+1. 画像付き下書きに対する POST `/api/receipts/{id}/ocr/local` で実行する。確定済みは409で拒否する。
+2. `local_ocr.py` が保存画像の名前・保存先・シンボリックリンクを検証し、サーバーと同じPythonで `paddle_ocr_worker.py` を別プロセスとして起動する。shellは使用しない。初回モデル取得を含め300秒で打ち切る。
+3. ワーカーは `PaddleOCR(lang='japan', ocr_version='PP-OCRv5', device='cpu')` を使用。文書の向き分類・歪み補正・文字行の向き分類とMKL-DNNは無効。画素座標の四角形を保持し、画像サイズで正規化した位置・大きさ・傾きを解析用に返す。
+4. モデルキャッシュはプロジェクトの `artifacts/paddleocr-cache/`。`LEDGER_DATA_DIR` を変更してもこの場所は変わらない。モデル取得先の事前チェックは無効化しているが、未取得モデルのダウンロードにはネット接続が必要。
+5. 認識原文を `receipts.raw` と `ocr_runs.raw` に保存した後、文字と座標から下書きを解析する。成功時は入力中の下書きを置き換え、確認を解除する。税込明細額はnull、税率は未選択で、人による修正・確認を要求する。
+
+認識失敗・タイムアウトは503、原文保存後の下書き解析失敗は422。導入状態は `GET /api/settings` の `local_ocr` で返し、パッケージの検出だけで判定する。モデル取得・認識成功を保証しない。旧 POST `/api/receipts/{id}/ocr` は廃止済み（404）。運用手順は[READMEのPaddleOCR節](../README.md#paddleocr無料端末内で処理)を参照。
 
 ## 状態遷移
 手入力/画像/Drive → draft → OCR（任意・常にdraft）→ 編集保存 → 確定検証 → confirmed。
@@ -43,7 +53,7 @@ OCR税別/不確実 → 税抜額/数量/印字総額/税率保持＋税込額nu
 処理中ロックで画像追加・DB更新を止め、SQLite backup APIで一時DBへスナップショット後、画像とZIP化。秘密ファイルは含めない。復元はサーバー停止中に信頼できるバックアップからDB/imagesをdataに置く。アプリ内の任意ZIP展開エンドポイントは作らない。
 
 ## 外部仕様の参照と検証範囲
-実装時に以下公式資料を取得・確認。HTTPリクエスト形状、JSON schema、Driveページング、ダウンロード、OAuth範囲をモック契約試験で確認。実アカウントOAuth・Driveは未接続。
+Driveページング、ダウンロード、OAuth範囲をモック契約試験で確認。実アカウントOAuth・Driveは未接続。PaddleOCRの認識は生成した日本語画像を使用する実OCRブラウザ試験で確認し、座標変換・下書き解析・履歴保存・失敗時の挙動は単体/API試験で確認する。過去の検証結果は[検証記録](verification.md)を参照。
 - Google Drive files.list: https://developers.google.com/drive/api/reference/rest/v3/files/list
 - Google Desktop OAuth: https://developers.google.com/identity/protocols/oauth2/native-app
 
