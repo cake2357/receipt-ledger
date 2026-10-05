@@ -1,0 +1,13 @@
+[project]
+name = "receipt-ledger"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115", "uvicorn>=0.34", "httpx>=0.28", "python-multipart>=0.0.20", "pillow>=11", "pillow-heif>=0.22", "python-dotenv>=1", "google-auth-oauthlib>=1.2"]
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "playwright>=1.50",
+    "httpx2>=2.13.1",
+]
+[tool.pytest.ini_options]
+pythonpath = ["."]

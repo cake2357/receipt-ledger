@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>レシート家計簿</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/field-errors.js" defer></script>
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="eyebrow">LOCAL / JPY</span>
+        <h1>レシート家計簿</h1>
+      </div>
+      <div class="header-meta">
+        <p>読み取る。見直す。暮らしを知る。</p>
+        <small class="version">v0.1.0</small>
+      </div>
+    </header>
+    <fieldset id="interaction" aria-label="家計簿の操作">
+      <nav>
+        <button data-page="dashboard">家計の概要</button>
+        <button data-page="receipts">レシート</button>
+        <button data-page="settings">分類・設定</button>
+      </nav>
+      <main>
+        <div id="message" role="status" aria-live="polite"></div>
+        <section id="dashboard">
+          <div class="heading">
+            <h2>家計の概要</h2>
+            <label>
+              集計月
+              <input id="month" type="month" />
+            </label>
+          </div>
+          <p class="muted">確定したレシートだけを集計しています。</p>
+          <div class="summary">
+            <span>今月の支出</span>
+            <strong id="monthly-total">¥0</strong>
+          </div>
+          <h3>今月の分類別割合</h3>
+          <div class="category-chart-wrap">
+            <canvas
+              id="category-chart"
+              width="320"
+              height="320"
+              role="img"
+              aria-label="今月の分類別支出の円グラフ"
+            >今月の分類別支出</canvas>
+            <ul id="category-chart-legend" class="category-chart-legend" aria-label="円グラフの凡例"></ul>
+          </div>
+          <h3>分類別の支出</h3>
+          <div id="category-totals" class="cards"></div>
+          <h3>分類別・日ごとの推移</h3>
+          <p class="muted">支出のない日も表示。金額は税込円。</p>
+          <div class="scroll">
+            <canvas
+              id="trend"
+              width="1000"
+              height="280"
+              aria-label="分類別日次推移グラフ"
+            ></canvas>
+            <table id="daily"></table>
+          </div>
+          <div class="actions">
+            <a id="csv" class="button" href="#">この月のCSV</a>
+            <a class="button" href="/api/backup">画像付きバックアップ</a>
+          </div>
+        </section>
+        <section id="receipts" hidden>
+          <div class="heading">
+            <h2>レシート</h2>
+            <button id="manual">手入力で追加</button>
+          </div>
+          <div class="actions">
+            <label class="button">
+              画像を追加
+              <input
+                id="upload"
+                type="file"
+                accept="image/jpeg,image/png,image/heic,image/heif"
+              />
+            </label>
+            <button id="drive">Driveから取り込む</button>
+          </div>
+          <p class="muted">
+            JPEG / PNG /
+            HEIC・12MBまで。画像を追加したら、レシートを開いて文字を読み取れます。
+          </p>
+          <div id="receipt-list" class="cards"></div>
+          <article id="review" hidden>
+            <div class="heading">
+              <h2>レシートの確認</h2>
+              <span id="receipt-status"></span>
+            </div>
+            <div class="review-grid">
+              <div>
+                <img id="receipt-image" alt="確認するレシートの画像" />
+                <p id="no-image">画像なし・手入力</p>
+              </div>
+              <div>
+                <h3 class="step">1. レシートを入力</h3>
+                <div id="ocr-controls">
+                <div class="actions">
+                  <button id="local-ocr" class="primary">
+                    画像から読み取る（無料）
+                  </button>
+                  <button id="ocr">AIで読み取る（有料）</button>
+                </div>
+                <p class="muted">
+                  画像の文字をこのMac内で読み取ります。読み取り後に商品名と金額を確認してください。もう一度読み取ると入力内容が置き換わります。
+                </p>
+                <p id="local-ocr-hint" class="muted"></p>
+                </div>
+                <div id="warnings" class="warning"></div>
+                <label>
+                  日付
+                  <input id="receipt-date" type="date" />
+                </label>
+                <label>
+                  店名
+                  <input id="store" maxlength="500" list="store-suggestions" placeholder="店名を入力・過去の候補から選択" />
+                  <datalist id="store-suggestions"></datalist>
+                </label>
+                <h4>商品明細</h4>
+                <p class="muted">
+                  同じ商品を2個買った場合は、2個分の金額を入れます。分からない金額は空欄で保存できます。
+                </p>
+                <p class="muted">商品名は過去の候補から選べます。金額欄でEnterを押すと次の明細へ進みます。</p>
+                <datalist id="item-suggestions"></datalist>
+                <details id="bulk-category-options">
+                  <summary>商品の分類をまとめて選ぶ</summary>
+                <div class="bulk-category actions">
+                  <label>未分類の明細をまとめて分類
+                    <select id="bulk-category"><option value="">分類を選択</option></select>
+                  </label>
+                  <button id="apply-category">分類が空欄の商品に使う</button>
+                </div>
+                </details>
+                <div id="items"></div>
+                <button id="add-item">明細を追加</button>
+                <label>
+                  レシートの合計（円）
+                  <input id="total" type="number" inputmode="numeric" min="0" step="1" />
+                </label>
+
+                <button id="use-item-total">商品の合計を使う</button>
+                <p class="muted">レシートがある場合は、書かれた合計金額と比べてください。</p>
+
+                <p class="muted">税抜の金額が書かれたレシートは、下のチェックを選んで計算できます。</p>
+                <label class="check">
+                  <input id="tax-exclusive" type="checkbox" />
+                  商品の金額が税抜で書かれている
+                </label>
+                <div id="allocation-panel" hidden>
+                  <h3>税抜の金額から計算する</h3>
+                  <p class="muted">各商品の「税抜の金額」を入力してください。分類に応じて税金を計算します。税率が違う場合は商品ごとに変更できます。</p>
+                  <label>
+                    OK食品割引
+                    <select id="ok-discount-mode">
+                      <option value="off">適用しない</option>
+                      <option value="formula">
+                        OKの食品割引を計算する（3/103）
+                      </option>
+                      <option value="printed">
+                        レシートに書かれた割引額を使う
+                      </option>
+                    </select>
+                  </label>
+                  <p id="ok-hint" class="muted"></p>
+                  <div id="printed-discount" hidden>
+                  <label>
+                    レシートに書かれた割引額（円）
+                    <input id="discount-total" type="number" min="0" step="1" />
+                  </label>
+                  <p class="muted">
+                    割引額を使う場合だけ入力してください。例：30円引きなら「30」。
+                  </p>
+                  </div>
+                  <button id="tax-calculate" class="primary">
+                    税込の金額を確認する
+                  </button>
+                  <div id="tax-preview" hidden></div>
+                  <button id="tax-apply" hidden>この金額を商品に反映する</button>
+                  <p id="tax-summary" class="muted"></p>
+
+                  <details id="manual-allocation">
+                    <summary>別の計算方法：レシートの税額を使う</summary>
+                    <p class="warning">
+                      全商品の税率が同じ場合だけ使えます。レシートの割引と税金を、商品金額に応じて分けて計算します。お店の計算とは端数がずれる場合があります。
+                    </p>
+                    <label>
+                      レシートに書かれた税率
+                      <select id="tax-rates">
+                        <option value="">不明（この方法では計算できません）</option>
+                        <option value="8">全商品 8%</option>
+                        <option value="10">全商品 10%</option>
+                        <option value="0">全商品 非課税</option>
+                        <option value="8,10">8%と10%が混在（上の計算を使ってください）</option>
+                      </select>
+                    </label>
+                    <label>
+                      割引後の小計（あれば入力・円）
+                      <input id="subtotal" type="number" min="0" step="1" />
+                    </label>
+                    <label>
+                      割引前の合計（円）
+                      <input
+                        id="pre-discount-total"
+                        type="number"
+                        min="0"
+                        step="1"
+                      />
+                    </label>
+                    <p class="muted">
+                      割引総額は上の共通欄に入力してください。
+                    </p>
+                    <label>
+                      レシートに書かれた税金（円）
+                      <input id="tax-total" type="number" min="0" step="1" />
+                    </label>
+                    <label>
+                      買った個数の合計（あれば入力）
+                      <input
+                        id="quantity-total"
+                        type="number"
+                        min="1"
+                        step="1"
+                      />
+                    </label>
+                    <button id="allocate">
+                      商品の税込金額を確認する
+                    </button>
+                    <div id="allocation-preview" hidden></div>
+                    <button id="apply-allocation" hidden>
+                      この金額を商品に反映する
+                    </button>
+                  </details>
+                </div>
+
+                <h3 class="step">2. 合計を確認して保存</h3>
+                <p id="confirm-guidance" class="muted">
+                  商品と合計がレシートと合っているか確認してください。合わない場合や金額が分からない場合は、下書きで保存できます。
+                </p>
+                <label id="allocation-approval" class="check">
+                  <input id="allocation-approved" type="checkbox" />
+                  割引・税金は計算で求めた金額です。修正した金額も含めて確認しました
+                </label>
+                <p id="balance"></p>
+                <button id="adopt-manual-amounts" type="button" hidden>
+                  保存済みの手修正額を採用
+                </button>
+                <label class="check">
+                  <input id="reviewed" type="checkbox" />
+                  日付・商品・分類・金額を確認しました
+                </label>
+                <div class="actions review-actions">
+                  <button id="save">下書きを保存</button>
+                  <button id="confirm" class="primary">確認して保存</button>
+                  <button id="reopen">再編集する</button>
+                </div>
+                <p id="review-message" role="status" aria-live="polite"></p>
+                <details id="raw-text-details">
+                  <summary>読み取った文字を確認</summary>
+                  <pre id="raw-text"></pre>
+                </details>
+                <details>
+                  <summary>詳細：読み取り結果のデータ</summary>
+                  <pre id="raw"></pre>
+                </details>
+              </div>
+            </div>
+          </article>
+        </section>
+        <section id="settings" hidden>
+          <h2>分類・設定</h2>
+          <h3>分類と説明</h3>
+          <p class="muted">
+            説明はAIの分類判断に使います。確定時に商品名の完全一致ルールを記憶します。
+          </p>
+          <div id="categories"></div>
+          <button id="new-category">分類を追加</button>
+          <h3>Google Drive</h3>
+          <label>
+            取り込むフォルダID
+            <input
+              id="drive-folder"
+              placeholder="URLの /folders/ の後ろの文字列"
+            />
+          </label>
+          <p id="google-status"></p>
+          <h3>画像から読み取る（無料）</h3>
+          <p id="local-ocr-status"></p>
+          <p>
+            APIキー・外部送信への同意は不要。過去に確定した商品名の完全一致ルールだけで分類し、未知の商品は未分類です。画像と原文を見て手修正し、確認してから確定してください。
+          </p>
+          <h3>有料AI OCR / OpenAI（任意）</h3>
+          <p>
+            画像と分類の説明が外部サービスへ送信され、従量料金が発生します。
+            <a
+              href="https://openai.com/api/pricing/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              公式料金表
+            </a>
+            でモデル・料金を確認してください。自動実行・自動再試行はありません。
+          </p>
+          <label class="check">
+            <input id="consent" type="checkbox" />
+            料金と画像の外部送信を確認し、有料OCRの利用に同意する
+          </label>
+          <p id="ocr-status"></p>
+          <div id="setup-instructions"></div>
+          <button id="save-settings" class="primary">設定を保存</button>
+        </section>
+      </main>
+    </fieldset>
+    <footer>データはこのMac内に保存 · 外部送信は明示操作のみ</footer>
+  </body>
+</html>

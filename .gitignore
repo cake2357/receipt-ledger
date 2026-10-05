@@ -1,0 +1,12 @@
+.venv/
+.env
+.env.*
+!.env.example
+data/
+*.sqlite3*
+*token*.json
+*client*.json
+__pycache__/
+.pytest_cache/
+artifacts/
+.DS_Store
