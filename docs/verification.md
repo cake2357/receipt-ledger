@@ -1,5 +1,14 @@
 # 検証記録
 
+## 2026-10-05 PaddleOCRへの切り替え
+
+- OCRをPaddleOCR 3.xの日本語PP-OCRv5 / CPUへ変更。有料OCRのHTTP adapter・API・ボタン・同意設定を削除。Google Driveの取り込みと保存済みデータは維持。
+- PaddleOCR 3.7.0 / PaddlePaddle 3.3.1を導入。生成した日本語画像を実uvicorn / Chromiumからアップロードし、実PaddleOCRで認識。日付・店名・原文表示、未確認の下書き、編集保存・再読込、月次合計0、有料ボタン不在、390px幅の横overflowなし、JSエラー0を確認。初回モデル取得込みのテストは42.55秒。
+- `tests/test_local_ocr.py` で画像パス・symlink拒否、300秒タイムアウト、失敗時の安全な案内、低信頼価格、完全一致分類、原文保存、確定済み拒否を確認。`tests/test_providers.py` で旧設定の読込、旧有料APIの404、旧APIキーを使わないことを確認。
+- 既存89件、実OCRブラウザ1件、座標変換と不正値の追加2件が成功。`git diff --check` と `uv lock --check --offline` も成功。
+- 以下のApple Vision / OpenAIの記録は過去の検証履歴です。現在の実装と操作手順はREADMEを参照してください。
+
+
 ## 2026-10-04 OpenAI OCRの実接続診断
 
 - 設定済みモデル `gpt-5.6-luna` のモデル取得APIはHTTP 200。

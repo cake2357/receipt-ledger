@@ -18,21 +18,20 @@ def test_heic_and_backup_restore(client,tmp_path):
     assert (restored.root/'images'/r.json()['image']).exists()
 
 def test_ocr_exact_rule_and_failed_raw_history(client,monkeypatch):
-    import providers
-    monkeypatch.setenv('OPENAI_API_KEY','test');monkeypatch.setenv('OPENAI_MODEL','test')
-    client.put('/api/settings',json={'ocr_consent':True})
+    import local_ocr
+    from test_local_ocr import line
     first=client.post('/api/receipts').json()
     client.put(f"/api/receipts/{first['id']}",json={'date':'2026-10-03','store':'店','total':108,'items':[{'name':'商品','category_id':4,'amount':108}],'reviewed':True})
     client.post(f"/api/receipts/{first['id']}/confirm")
     r=client.post('/api/upload',files={'file':('r.png',png(),'image/png')}).json()
-    parsed={'date':'2026-10-03','store':'店','total':108,'tax_inclusive':True,'warnings':[],'items':[{'name':'商品','category_id':1,'amount':108}]}
-    monkeypatch.setattr(providers,'extract',lambda *a:(parsed,{'first':'raw'}))
-    response=client.post(f"/api/receipts/{r['id']}/ocr")
+    raw={'lines':[line('テスト店',.05),line('2026年10月03日',.1),line('F商品 ¥108',.2),line('合計 ¥108',.3)]}
+    monkeypatch.setattr(local_ocr,'recognize',lambda *a:raw)
+    url=f"/api/receipts/{r['id']}/ocr/local"
+    response=client.post(url)
     assert response.json()['items'][0]['category_id']==4
-    monkeypatch.setattr(providers,'extract',lambda *a:(None,{'refusal':'raw'}))
-    assert client.post(f"/api/receipts/{r['id']}/ocr").status_code==502
+    monkeypatch.setattr(local_ocr,'parse_receipt',lambda *a:None)
+    assert client.post(url).status_code==422
     with client.app.state.store.db() as db:
-        assert db.execute("SELECT name FROM sqlite_master WHERE name='ocr_runs'").fetchone(), 'retain every extraction raw output'
         assert db.execute('SELECT count(*) FROM ocr_runs WHERE receipt_id=?',(r['id'],)).fetchone()[0]==2
 
 def test_request_without_origin_rejected(client):

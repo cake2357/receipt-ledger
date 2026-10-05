@@ -53,7 +53,6 @@ const busyLabels = {
   allocate: "商品の金額を計算中…",
   "apply-allocation": "商品の金額を反映中…",
   "local-ocr": "無料OCRで読み取り中…",
-  ocr: "有料OCRで読み取り中…",
   manual: "下書きを作成中…",
   drive: "Drive取り込み中…",
   "save-settings": "設定を保存中…",
@@ -319,7 +318,6 @@ async function open(id) {
     "add-item",
     "apply-category",
     "use-item-total",
-    "ocr",
     "local-ocr",
     "allocate",
     "tax-calculate",
@@ -328,7 +326,6 @@ async function open(id) {
   $("#reopen").hidden = !locked;
   settings = await api("/settings");
   $("#local-ocr").disabled = !current.image || !settings.local_ocr?.available;
-  $("#ocr").disabled = !current.image || !settings.ocr_ready;
   $("#local-ocr-hint").textContent =
     settings.local_ocr?.message ||
     "無料OCRの更新を反映するためサーバーを再起動してください。";
@@ -725,15 +722,14 @@ $("#reopen").onclick = action(async () => {
 $("#local-ocr").onclick = action(async () => {
   if (
     !window.confirm(
-      "このMac内だけで無料OCRを実行します。入力中の下書きを置き換えます。続けますか？",
+      "この端末内でPaddleOCRを実行します。入力中の下書きを置き換えます。続けますか？",
     )
   )
     return;
   const id = current.id;
   $("#local-ocr").disabled = true;
-  $("#ocr").disabled = true;
   message(
-    "無料OCRで読み取り中…初回準備は最大120秒、読取は最大60秒。外部送信なし。",
+    "PaddleOCRで読み取り中…初回はモデルをダウンロードします。最大300秒。画像の外部送信なし。",
   );
   try {
     await api("/receipts/" + id + "/ocr/local", "POST");
@@ -747,20 +743,7 @@ $("#local-ocr").onclick = action(async () => {
     throw e;
   } finally {
     $("#local-ocr").disabled = !current.image || !settings.local_ocr?.available;
-    $("#ocr").disabled = !current.image || !settings.ocr_ready;
   }
-});
-$("#ocr").onclick = action(async () => {
-  if (
-    !window.confirm(
-      "画像をOpenAIへ送信し、従量料金が発生します。入力中の明細を置き換えます。続けますか？",
-    )
-  )
-    return;
-  message("読み取り中…（自動再試行なし）");
-  await api("/receipts/" + current.id + "/ocr", "POST");
-  await open(current.id);
-  message("読み取り結果を必ず確認・修正してください。");
 });
 $("#drive").onclick = action(async () => {
   message("Drive取り込み中…");
@@ -819,17 +802,14 @@ async function loadSettings() {
   $("#categories").replaceChildren();
   cats.forEach(categoryEditor);
   $("#drive-folder").value = settings.drive_folder;
-  $("#consent").checked = settings.ocr_consent;
   $("#google-status").textContent = settings.google_authorized
     ? "認証ファイルあり（接続は取り込み時に検証）"
     : "未認証：READMEのGoogle OAuth手順を実行してください。";
   $("#local-ocr-status").textContent =
     (settings.local_ocr?.available
-      ? "利用環境あり（日本語対応は実行時に確認） · "
+      ? "導入済み（認識モデルは初回実行時に確認） · "
       : "利用できません · ") +
     (settings.local_ocr?.message || "サーバーを再起動してください。");
-  $("#ocr-status").textContent =
-    `${settings.ocr_ready ? "設定済み（接続・API残高は未確認）" : "無効 / 設定不足"} · モデル: ${settings.model || "未設定"} · APIキー: ${settings.key_present ? "設定あり" : "未設定"}`;
   $("#setup-instructions").replaceChildren(
     ...settings.instructions.map((s) => node("p", s, "muted")),
   );
@@ -838,7 +818,6 @@ $("#new-category").onclick = () => categoryEditor();
 $("#save-settings").onclick = action(async () => {
   await api("/settings", "PUT", {
     drive_folder: $("#drive-folder").value.trim(),
-    ocr_consent: $("#consent").checked,
   });
   await loadSettings();
   message("設定を保存しました。");

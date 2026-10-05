@@ -1,64 +1,56 @@
-"""Apple Vision runs on this Mac only. Never falls back to an external API."""
-import hashlib
+"""Japanese PaddleOCR on the local CPU; no remote OCR provider."""
+import importlib.util
 import json
-import platform
+import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
-import threading
+import sys
 
 ROOT = Path(__file__).resolve().parent
-_BUILD_LOCK = threading.Lock()
+OCR_TIMEOUT = 300
 
 class LocalOCRError(Exception):
     pass
 
 
 def availability():
-    ready = platform.system() == 'Darwin' and shutil.which('xcrun') is not None
-    return {'available': ready, 'message': 'Apple Vision / 日本語。初回はSwiftをコンパイル（最大120秒）、読取は最大60秒。' if ready else 'MacとXcode Command Line Toolsが必要です。Macで xcode-select --install を実行するか、手入力してください。外部AIには自動送信しません。'}
-
-
-def ensure_binary():
-    if not availability()['available']:
-        raise LocalOCRError(availability()['message'])
-    source = ROOT/'native'/'vision_ocr.swift'
-    fingerprint = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
-    folder = ROOT/'artifacts'/'local-ocr-cache'
-    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-    binary = folder/('vision-'+fingerprint)
-    with _BUILD_LOCK:
-        if not binary.exists():
-            pending = binary.with_suffix('.building')
-            try:
-                subprocess.run(['/usr/bin/xcrun','swiftc',str(source),'-o',str(pending)], check=True, capture_output=True, text=True, timeout=120)
-                pending.chmod(0o700)
-                pending.replace(binary)
-            except (OSError, subprocess.SubprocessError):
-                pending.unlink(missing_ok=True)
-                raise LocalOCRError('無料OCRの準備に失敗しました。Xcode Command Line ToolsとmacOSの対応を確認してください。手入力できます（有料AIへの自動切替なし）。') from None
-    return binary
+    ready = all(importlib.util.find_spec(name) is not None for name in ('paddleocr', 'paddle'))
+    return {'available': ready, 'engine': 'PaddleOCR', 'message':
+            'PaddleOCR / 日本語 / CPU。画像はこの端末内で処理します。初回は認識モデルをダウンロード（ネット接続が必要）。最大300秒。'
+            if ready else 'PaddleOCRが未導入です。uv sync --frozen を実行し、サーバーを再起動してください。手入力もできます。'}
 
 
 def recognize(image, images_root):
     image, images_root = Path(image), Path(images_root).resolve()
     if (image.is_symlink() or image.resolve().parent != images_root
-            or not re.fullmatch(r'[a-f0-9]{64}\.jpg',image.name) or not image.is_file()):
+            or not re.fullmatch(r'[a-f0-9]{64}\.jpg', image.name) or not image.is_file()):
         raise LocalOCRError('アプリ内の保存済み画像だけ読み取れます。')
-    binary = ensure_binary()
+    if not availability()['available']:
+        raise LocalOCRError(availability()['message'])
+    # Isolate native inference and model initialization so timeouts stop the work.
+    cache = ROOT/'artifacts'/'paddleocr-cache'
+    cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    env = {**os.environ, 'PADDLE_PDX_CACHE_HOME': str(cache),
+           'PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK': 'True',
+           'HF_HOME': str(cache/'huggingface'), 'MODELSCOPE_CACHE': str(cache/'modelscope')}
     try:
-        result = subprocess.run([str(binary),str(image.resolve())], check=True, capture_output=True, text=True, timeout=60)
-        raw = json.loads(result.stdout)
-        if not isinstance(raw,dict) or not isinstance(raw.get('lines'),list): raise ValueError()
+        result = subprocess.run([sys.executable, str(ROOT/'paddle_ocr_worker.py'), str(image.resolve())],
+                                check=True, capture_output=True, text=True,
+                                timeout=OCR_TIMEOUT, env=env)
+        # Paddle dependencies may log to stdout. Only accept our marked JSON line.
+        output = next(line[len('LEDGER_OCR_RESULT='):] for line in reversed(result.stdout.splitlines())
+                      if line.startswith('LEDGER_OCR_RESULT='))
+        raw = json.loads(output)
+        if not isinstance(raw, dict) or not isinstance(raw.get('lines'), list): raise ValueError()
         if len(raw['lines']) > 5000: raise ValueError()
         for line in raw['lines']:
-            if not isinstance(line,dict) or not isinstance(line.get('text'),str): raise ValueError()
+            if not isinstance(line, dict) or not isinstance(line.get('text'), str): raise ValueError()
         return raw
     except subprocess.TimeoutExpired:
-        raise LocalOCRError('無料OCRが60秒でタイムアウトしました。手入力または画像を撮り直してください。外部送信はありません。') from None
-    except (OSError, subprocess.SubprocessError, ValueError):
-        raise LocalOCRError('Apple Visionで読み取れませんでした。日本語認識対応のmacOSを確認し、手入力または画像を撮り直してください。外部送信はありません。') from None
+        raise LocalOCRError('PaddleOCRが300秒でタイムアウトしました。初回モデル取得のネット接続を確認するか、手入力してください。') from None
+    except (OSError, subprocess.SubprocessError, ValueError, StopIteration):
+        raise LocalOCRError('PaddleOCRで読み取れませんでした。依存パッケージと初回モデル取得のネット接続を確認し、手入力または画像を撮り直してください。') from None
 
 
 def parse_receipt(raw, rules=None):
@@ -181,7 +173,7 @@ def install_local_ocr(app, store):
                 raw=recognize(store.root/'images'/receipt['image'],store.root/'images')
             except LocalOCRError as exc:
                 raise HTTPException(503,str(exc)) from None
-            raw={**raw,'engine':'Apple Vision','text':'\n'.join(l['text'] for l in raw['lines'])}
+            raw={**raw,'engine':'PaddleOCR','text':'\n'.join(l['text'] for l in raw['lines'])}
             serialized=json.dumps(raw,ensure_ascii=False)
             with store.db() as db:
                 db.execute('UPDATE receipts SET raw=? WHERE id=?',(serialized,rid))

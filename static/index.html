@@ -107,7 +107,6 @@
                   <button id="local-ocr" class="primary">
                     画像から読み取る（無料）
                   </button>
-                  <button id="ocr">AIで読み取る（有料）</button>
                 </div>
                 <p class="muted">
                   画像の文字をこのMac内で読み取ります。読み取り後に商品名と金額を確認してください。もう一度読み取ると入力内容が置き換わります。
@@ -278,7 +277,7 @@
           <h2>分類・設定</h2>
           <h3>分類と説明</h3>
           <p class="muted">
-            説明はAIの分類判断に使います。確定時に商品名の完全一致ルールを記憶します。
+            説明は分類内容のメモです。確定時に商品名の完全一致ルールを記憶し、次回の入力やOCRで使います。
           </p>
           <div id="categories"></div>
           <button id="new-category">分類を追加</button>
@@ -291,28 +290,11 @@
             />
           </label>
           <p id="google-status"></p>
-          <h3>画像から読み取る（無料）</h3>
+          <h3>PaddleOCR（無料・端末内で処理）</h3>
           <p id="local-ocr-status"></p>
           <p>
-            APIキー・外部送信への同意は不要。過去に確定した商品名の完全一致ルールだけで分類し、未知の商品は未分類です。画像と原文を見て手修正し、確認してから確定してください。
+            日本語モデルを使い、この端末内で文字を認識します。初回のみモデルのダウンロードにネット接続が必要です。過去に確定した商品名の完全一致ルールだけで分類し、未知の商品は未分類です。画像と原文を見て手修正し、確認してから確定してください。
           </p>
-          <h3>有料AI OCR / OpenAI（任意）</h3>
-          <p>
-            画像と分類の説明が外部サービスへ送信され、従量料金が発生します。
-            <a
-              href="https://openai.com/api/pricing/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              公式料金表
-            </a>
-            でモデル・料金を確認してください。自動実行・自動再試行はありません。
-          </p>
-          <label class="check">
-            <input id="consent" type="checkbox" />
-            料金と画像の外部送信を確認し、有料OCRの利用に同意する
-          </label>
-          <p id="ocr-status"></p>
           <div id="setup-instructions"></div>
           <button id="save-settings" class="primary">設定を保存</button>
         </section>

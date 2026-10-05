@@ -12,4 +12,4 @@ def test_private_iphone_jpeg_upload(client,name):
     r=response.json()
     assert r['status']=='draft' and r['items']==[] and r['raw'] is None
     assert client.get(f"/api/receipts/{r['id']}/image").status_code==200
-    assert client.get('/api/settings').json()['ocr_consent'] is False
+    assert 'ocr_consent' not in client.get('/api/settings').json()

@@ -6,21 +6,20 @@ import subprocess
 import pytest
 
 
-def test_local_vision_boundary(tmp_path, monkeypatch):
+def test_local_paddle_boundary(tmp_path, monkeypatch):
     assert importlib.util.find_spec('local_ocr') is not None, 'free local OCR implementation missing'
     import local_ocr
     images=tmp_path/'images'; images.mkdir()
     image=images/('a'*64+'.jpg'); image.write_bytes(b'fixture')
-    binary=tmp_path/'vision'; binary.write_bytes(b'fixture')
-    monkeypatch.setattr(local_ocr,'ensure_binary',lambda:binary)
+    monkeypatch.setattr(local_ocr,'availability',lambda:{'available':True})
     calls=[]
     def run(args, **kwargs):
         calls.append((args,kwargs))
-        return subprocess.CompletedProcess(args,0,json.dumps({'lines':[{'text':'牛肉 ¥120','confidence':0.9,'x':0.1,'y':0.2,'width':0.5,'height':0.02}]}),'')
+        return subprocess.CompletedProcess(args,0,'LEDGER_OCR_RESULT='+json.dumps({'lines':[{'text':'牛肉 ¥120','confidence':0.9,'x':0.1,'y':0.2,'width':0.5,'height':0.02}]}),'')
     monkeypatch.setattr(local_ocr.subprocess,'run',run)
     assert local_ocr.recognize(image,images)['lines'][0]['text']=='牛肉 ¥120'
-    assert calls[0][0]==[str(binary),str(image.resolve())]
-    assert calls[0][1]['timeout']==60
+    assert calls[0][0]==[local_ocr.sys.executable,str(local_ocr.ROOT/'paddle_ocr_worker.py'),str(image.resolve())]
+    assert calls[0][1]['timeout']==300
     assert not calls[0][1].get('shell',False)
     with pytest.raises(local_ocr.LocalOCRError): local_ocr.recognize(tmp_path/'outside.jpg',images)
     assert len(calls)==1
@@ -62,8 +61,9 @@ def test_local_endpoint_without_paid_credentials_or_consent(tmp_path, monkeypatc
     from ledger import create_app
     monkeypatch.delenv('OPENAI_API_KEY',raising=False)
     monkeypatch.delenv('OPENAI_MODEL',raising=False)
-    monkeypatch.setattr(providers,'extract',lambda *a,**k:pytest.fail('paid API must never be used'))
-    raw={'engine':'Apple Vision','lines':[line('テスト商店',.05),line('2026年04月03日',.1),line('F牛肉',.2),line('¥200',.2,.7),line('合計',.3),line('¥200',.3,.7),line('税抜',.4)]}
+    assert not hasattr(providers,'extract')
+    monkeypatch.setattr(providers.httpx,'Client',lambda *a,**k:pytest.fail('OCR must not use HTTP providers'))
+    raw={'engine':'PaddleOCR','lines':[line('テスト商店',.05),line('2026年04月03日',.1),line('F牛肉',.2),line('¥200',.2,.7),line('合計',.3),line('¥200',.3,.7),line('税抜',.4)]}
     monkeypatch.setattr(local_ocr,'recognize',lambda *a:raw)
     app=create_app(tmp_path)
     with app.state.store.db() as db: db.execute('INSERT INTO rules VALUES(?,?)',('牛肉',1))
@@ -76,10 +76,10 @@ def test_local_endpoint_without_paid_credentials_or_consent(tmp_path, monkeypatc
         data=response.json()
         assert data['status']=='draft' and not data['reviewed']
         assert data['items'][0]['category_id']==1 and data['items'][0]['amount'] is None
-        assert json.loads(data['raw'])['engine']=='Apple Vision'
+        assert json.loads(data['raw'])['engine']=='PaddleOCR'
         assert 'F牛肉' in json.loads(data['raw'])['text']
         assert c.get(f"/api/receipts/{r['id']}").json()==data
-        assert c.get('/api/settings').json()['ocr_consent'] is False
+        assert 'ocr_consent' not in c.get('/api/settings').json()
         assert 'local_ocr' in c.get('/api/settings').json()
         assert c.post(url,headers={'Origin':'http://evil.example'}).status_code==403
         manual=c.post('/api/receipts').json()
@@ -108,39 +108,37 @@ def test_local_timeouts_and_path_escape_are_safe(tmp_path, monkeypatch):
     import local_ocr
     images=tmp_path/'images'; images.mkdir()
     image=images/('b'*64+'.jpg'); image.write_bytes(b'x')
-    monkeypatch.setattr(local_ocr,'ensure_binary',lambda:tmp_path/'vision')
+    monkeypatch.setattr(local_ocr,'availability',lambda:{'available':True})
     def timeout(*a,**kw): raise subprocess.TimeoutExpired(a[0],60)
     monkeypatch.setattr(local_ocr.subprocess,'run',timeout)
-    with pytest.raises(local_ocr.LocalOCRError,match='60秒'): local_ocr.recognize(image,images)
+    with pytest.raises(local_ocr.LocalOCRError,match='300秒'): local_ocr.recognize(image,images)
     link=images/('c'*64+'.jpg'); link.symlink_to(image)
     with pytest.raises(local_ocr.LocalOCRError,match='保存済み'): local_ocr.recognize(link,images)
     with pytest.raises(local_ocr.LocalOCRError): local_ocr.recognize(images/'../../outside.jpg',images)
-    monkeypatch.setattr(local_ocr.platform,'system',lambda:'Linux')
+
+
+def test_missing_dependencies_and_safe_failure(tmp_path, monkeypatch):
+    import local_ocr
+    monkeypatch.setattr(local_ocr.importlib.util, 'find_spec', lambda name: None)
     assert not local_ocr.availability()['available']
-    assert '手入力' in local_ocr.availability()['message']
-
-
-def test_compile_failure_does_not_leak_diagnostics_or_retry(tmp_path,monkeypatch):
-    import local_ocr
-    (tmp_path/'native').mkdir();(tmp_path/'native/vision_ocr.swift').write_text('// fixture')
-    monkeypatch.setattr(local_ocr,'ROOT',tmp_path)
-    monkeypatch.setattr(local_ocr,'availability',lambda:{'available':True})
+    assert 'uv sync' in local_ocr.availability()['message']
+    images=tmp_path/'images'; images.mkdir()
+    image=images/('d'*64+'.jpg'); image.write_bytes(b'x')
+    with pytest.raises(local_ocr.LocalOCRError, match='未導入'):
+        local_ocr.recognize(image, images)
+    monkeypatch.setattr(local_ocr, 'availability', lambda: {'available': True})
     calls=[]
-    def fail(args,**kwargs):
-        calls.append((args,kwargs))
-        raise subprocess.CalledProcessError(1,args,stderr='PRIVATE PATH AND TEXT')
-    monkeypatch.setattr(local_ocr.subprocess,'run',fail)
-    with pytest.raises(local_ocr.LocalOCRError) as exc: local_ocr.ensure_binary()
+    def fail(args, **kwargs):
+        calls.append(args)
+        raise subprocess.CalledProcessError(1, args, stderr='PRIVATE PATH AND TEXT')
+    monkeypatch.setattr(local_ocr.subprocess, 'run', fail)
+    with pytest.raises(local_ocr.LocalOCRError) as exc:
+        local_ocr.recognize(image, images)
     assert 'PRIVATE' not in str(exc.value) and len(calls)==1
-    assert calls[0][1]['timeout']==120
-    assert not list((tmp_path/'artifacts/local-ocr-cache').glob('*.building'))
 
 
-def test_native_contract_and_slope_rows():
+def test_slope_rows():
     import local_ocr
-    source=(local_ocr.ROOT/'native/vision_ocr.swift').read_text()
-    assert 'VNRecognizeTextRequest' in source and 'supportedRecognitionLanguages' in source
-    assert 'ja-JP' in source and 'observation.topRight' in source
     raw={'lines':[line('テスト店',.05),line('2026年04月03日',.1),line('F牛肉',.2),line('¥200',.224,.7,width=.1),line('合計',.3),line('¥200',.324,.7,width=.1),line('税抜',.4)]}
     for l in raw['lines']:
         l['slope']=.04

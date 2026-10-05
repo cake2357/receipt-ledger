@@ -1,3 +1,3 @@
 # TODO
-- [ ] OCRのOSSへの対応
+- [x] OCRのOSSへの対応（PaddleOCR）
 - [ ] 分類ではなくタグ化

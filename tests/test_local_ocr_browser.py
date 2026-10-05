@@ -1,4 +1,4 @@
-"""Chromium exercises real local Vision, using a generated image only."""
+"""Chromium exercises real local PaddleOCR, using a generated image only."""
 import os, socket, subprocess, time
 from pathlib import Path
 import httpx
@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_free_local_ocr_browser(tmp_path):
     from local_ocr import availability
-    if not availability()['available']: pytest.skip('Apple Vision needs macOS + CLT')
+    if not availability()['available']: pytest.skip('PaddleOCR dependencies are not installed')
     from PIL import Image,ImageDraw,ImageFont
     image=Image.new('RGB',(1000,900),'white')
     draw=ImageDraw.Draw(image)
@@ -40,10 +40,10 @@ def test_free_local_ocr_browser(tmp_path):
             button=page.get_by_role('button',name='画像から読み取る（無料）',exact=True)
             expect(button).to_be_visible(timeout=5000)
             expect(button).to_be_enabled()
-            expect(page.get_by_role('button',name='AIで読み取る（有料）',exact=True)).to_be_disabled()
+            expect(page.get_by_role('button',name='AIで読み取る（有料）',exact=True)).to_have_count(0)
             page.on('dialog',lambda dialog:dialog.accept())
             button.click()
-            expect(page.locator('#message')).to_contain_text('無料OCRの下書き',timeout=180000)
+            expect(page.locator('#message')).to_contain_text('無料OCRの下書き',timeout=330000)
             expect(page.locator('#receipt-date')).to_have_value('2026-04-03')
             expect(page.locator('.receipt-card')).to_contain_text('2026-04-03')
             expect(page.locator('#store')).to_have_value('テスト商店')
@@ -61,9 +61,9 @@ def test_free_local_ocr_browser(tmp_path):
             page.reload();page.get_by_role('button',name='レシート',exact=True).click();page.locator('.receipt-card').click()
             expect(page.locator('#store')).to_have_value('編集できる店')
             page.get_by_role('button',name='分類・設定').click()
-            expect(page.locator('#local-ocr-status')).to_contain_text('Apple Vision')
-            assert httpx.get(base+'/api/settings').json()['ocr_consent'] is False
-            assert httpx.get(base+'/api/settings').json()['key_present'] is False
+            expect(page.locator('#local-ocr-status')).to_contain_text('PaddleOCR')
+            assert 'ocr_consent' not in httpx.get(base+'/api/settings').json()
+            assert 'key_present' not in httpx.get(base+'/api/settings').json()
             assert httpx.get(base+'/api/dashboard?month=2026-04').json()['total']==0
             page.screenshot(path=str(ROOT/'artifacts/local-ocr-browser.png'),full_page=True)
             assert not external and not errors

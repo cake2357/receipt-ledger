@@ -2,12 +2,12 @@
 
 ## 構成
 ブラウザ（HTML/CSS/vanilla JavaScript）→ FastAPI → SQLite / images。
-外部接続は手動操作のGoogle Drive read-onlyと、同意済み手動OpenAI OCRのみ。サーバーは単一worker、RLockでDB操作・画像取り込み・バックアップを直列化する。大規模運用ではジョブキュー/ページング/別ロック設計が必要。
+外部接続は手動操作のGoogle Drive read-onlyとPaddleOCRの初回モデル取得。OCR画像の処理は端末内。サーバーは単一worker、RLockでDB操作・画像取り込み・バックアップを直列化する。大規模運用ではジョブキュー/ページング/別ロック設計が必要。
 
 - `ledger.py`: データモデル、下書き/確定/再編集、分類、集計、CSV、バックアップ
 - `media.py`: Host/Origin・本文容量検査、画像の検証/変換、SHA-256重複検出
-- `local_ocr.py` / `native/vision_ocr.swift`: Apple Visionローカル日本語OCR、キャッシュ付き初回コンパイル、座標による行復元、保守的な下書き解析。ネットワーク不使用。内部画像パス検証、実行timeout、完全一致分類、監査保存。
-- `providers.py`: Responses APIとDrive RESTのHTTP adapter、設定、OCR/Drive取り込み
+- `local_ocr.py` / `paddle_ocr_worker.py`: PaddleOCRローカル日本語OCR、初回モデル取得とキャッシュ、座標による行復元、保守的な下書き解析。画像の外部送信なし。内部画像パス検証、実行timeout、完全一致分類、監査保存。
+- `providers.py`: Drive RESTのHTTP adapter、設定、Drive取り込み
 - `oauth_setup.py`: Desktop OAuth、PKCE、127.0.0.1 ephemeral callback、read-only scope
 - `server.py`: .env読み込み、localhost固定bind、umask 077
 - `static/`: 日本語画面、DOMノード生成、外部CDNなし
@@ -30,7 +30,7 @@ OCR税別/不確実 → 税抜額/数量/印字総額/税率保持＋税込額nu
 
 ## API
 - GET/POST `/api/receipts`、GET/PUT `/api/receipts/{id}`
-- POST `/api/receipts/{id}/confirm`、`/reopen`、`/ocr`（有料）、`/ocr/local`（無料・APIキー/同意不要）
+- POST `/api/receipts/{id}/confirm`、`/reopen`、`/ocr/local`（PaddleOCR・APIキー不要）
 - POST `/api/receipts/{id}/allocation-preview`（書込なしの案）、`/allocate`（下書きへ明示適用）
 - GET `/api/receipts/{id}/image`
 - POST `/api/upload`（multipart、file）
@@ -43,11 +43,9 @@ OCR税別/不確実 → 税抜額/数量/印字総額/税率保持＋税込額nu
 処理中ロックで画像追加・DB更新を止め、SQLite backup APIで一時DBへスナップショット後、画像とZIP化。秘密ファイルは含めない。復元はサーバー停止中に信頼できるバックアップからDB/imagesをdataに置く。アプリ内の任意ZIP展開エンドポイントは作らない。
 
 ## 外部仕様の参照と検証範囲
-実装時に以下公式資料を取得・確認。HTTPリクエスト形状、JSON schema、Driveページング、ダウンロード、OAuth範囲をモック契約試験で確認。実アカウントOAuth・Drive・有料OCRは未接続、ライブ成功を主張しない。
-- OpenAI Structured Outputs: https://platform.openai.com/docs/guides/structured-outputs
+実装時に以下公式資料を取得・確認。HTTPリクエスト形状、JSON schema、Driveページング、ダウンロード、OAuth範囲をモック契約試験で確認。実アカウントOAuth・Driveは未接続。
 - Google Drive files.list: https://developers.google.com/drive/api/reference/rest/v3/files/list
 - Google Desktop OAuth: https://developers.google.com/identity/protocols/oauth2/native-app
-- OpenAI料金（有効化前に利用者が確認）: https://openai.com/api/pricing/
 
 ## テスト方針
 縦方向のRED→GREENを、手入力確定→分類/集計/出力→画像/保護→外部adapter→UI→整数永続化→OAuth→ブラウザ→堅牢化の順に実施。pytest TestClientでDBを実際に書き、外部のみMockTransport/adapter差し替え。Playwrightは実uvicorn＋使い捨てデータ領域で実行。課金APIを呼ばず、画像fixtureはテスト内で生成する。
